@@ -59,8 +59,6 @@ class ChainRetriever():
         self.errors = []
         self.chain = None
 
-
-
     def walk_the_tree(self, loops):
 
         for link in self.links:
@@ -70,8 +68,7 @@ class ChainRetriever():
 
         if contains(self.links, lambda x: x['checked'] == False):
             loops += 1
-            self.walk_the_tree(loops) 
-
+            self.walk_the_tree(loops)
 
     def add_link(self, activity, parent, direction, checked):
         
@@ -85,6 +82,13 @@ class ChainRetriever():
                 'direction' : direction,
                 'checked': checked
             })
+        else:
+            link = None
+            for l in self.links:
+                if l['iati_identifier'] == activity.iati_identifier:
+                    link = l
+            if (direction == 'up' and link['direction'] == 'down') or (direction == 'down' and link['direction'] == 'up'):
+                link['direction'] = 'both'
 
     def add_error(self, iati_identifier_or_link_id, iati_element, message, level):
 
@@ -212,7 +216,6 @@ class ChainRetriever():
         # DONE IN #3.
 
 
-
         # cache for #5
         for t in activity.transaction_set.filter(transaction_type='4'):
             try:
@@ -245,9 +248,4 @@ class ChainRetriever():
 
         # 9.
         # DONE IN #2
-
-
-
-
-
 
