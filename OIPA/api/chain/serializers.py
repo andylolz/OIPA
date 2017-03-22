@@ -14,9 +14,23 @@ class SimpleActivitySerializer(serializers.ModelSerializer):
         )
 
 
+class ChainNodeSerializer(DynamicFieldsModelSerializer):
+    activity = SimpleActivitySerializer()
+
+    class Meta:
+        model = chain_models.Chain
+        fields = (
+            'chain',
+            'activity',
+            'activity_identifier',
+            'level',
+            'bol',
+            'eol'
+        )
+
+
 class ChainSerializer(DynamicFieldsModelSerializer):
 
-    root_activity = SimpleActivitySerializer()
     links = serializers.HyperlinkedIdentityField(
         read_only=True,
         view_name='chains:chain-link-list',
@@ -30,43 +44,57 @@ class ChainSerializer(DynamicFieldsModelSerializer):
         view_name='chains:chain-activity-list',
         )
 
-
     class Meta:
         model = chain_models.Chain
         fields = (
             'id',
-            'root_activity',
+            'name',
+            'last_updated',
             'links',
             'errors',
             'activities'
         )
 
 
+class ChainLinkRelationSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = chain_models.ChainLinkRelation
+        fields = (
+            'id',
+            'chain_link',
+            'relation',
+            'from_node',
+            'related_id'
+        )
+
+
 class ChainLinkSerializer(DynamicFieldsModelSerializer):
-    # chain = ChainSerializer()
-    activity = SimpleActivitySerializer()
-    parent_activity = SimpleActivitySerializer()
+    chain = ChainSerializer()
+    start_node = ChainNodeSerializer()
+    end_node = ChainNodeSerializer()
+    relations = ChainLinkRelationSerializer(many=True)
 
     class Meta:
         model = chain_models.ChainLink
         fields = (
             'id',
             'chain',
-            'activity',
-            'parent_activity',
-            'direction'
+            'start_node',
+            'end_node',
+            'relations'
         )
 
 
-class ChainErrorSerializer(DynamicFieldsModelSerializer):
-    # chain = ChainSerializer()
+class ChainNodeErrorSerializer(DynamicFieldsModelSerializer):
 
     class Meta:
-        model = chain_models.ChainError
+        model = chain_models.ChainNodeError
         fields = (
             'chain',
-            'error_location',
-            'iati_element',
-            'message',
-            'level'
+            'error_type',
+            'mentioned_activity_or_org',
+            'related_id',
+            'warning_level'
         )
+

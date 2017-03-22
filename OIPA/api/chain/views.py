@@ -4,9 +4,9 @@ from api.generics.views import DynamicListView, DynamicDetailView
 from api.aggregation.views import AggregationView, Aggregation, GroupBy
 from django.db.models import Sum
 
-from api.chain.filters import ChainFilter, ChainLinkFilter, ChainErrorFilter
-from api.chain.serializers import ChainSerializer, ChainLinkSerializer, ChainErrorSerializer
-from traceability.models import Chain, ChainLink, ChainError
+from api.chain.filters import ChainFilter, ChainLinkFilter, ChainNodeErrorFilter
+from api.chain.serializers import ChainSerializer, ChainLinkSerializer, ChainNodeErrorSerializer
+from traceability.models import Chain, ChainNode, ChainNodeError, ChainLink, ChainLinkRelation
 
 
 from rest_framework import filters
@@ -101,7 +101,8 @@ class ChainList(DynamicListView):
 
     fields = (
         'id',
-        'root_activity'
+        'name',
+        'last_updated'
     )
 
 
@@ -114,14 +115,14 @@ class ChainDetail(DynamicDetailView):
 
     fields = (
         'id',
-        'root_activity',
+        'name',
+        'last_updated',
         'links',
         'errors',
         'activities'
     )
 
 
-# TODO : put this under the right URL structure (per chain)
 class ChainLinkList(DynamicListView):
     """
     Returns a list of chain links.
@@ -151,31 +152,34 @@ class ChainLinkList(DynamicListView):
     )
     fields = (
         'id',
-        'activity',
-        'parent_activity',
-        'direction',)
+        'chain',
+        'start_node',
+        'end_node',
+        'relations')
 
     def get_queryset(self):
         pk = self.kwargs.get('pk')
-        return ChainLink.objects.filter(chain=Chain.objects.get(pk=pk))
+        return ChainLink.objects.filter(chain=Chain.objects.get(pk=pk)).prefetch_related('relations')
 
 
-class ChainErrorList(DynamicListView):
+class ChainNodeErrorList(DynamicListView):
     """
     Returns a list of chain errors.
     """
 
-    queryset = ChainError.objects.all()
+    queryset = ChainNodeError.objects.all()
     filter_backends = (DjangoFilterBackend, )
-    filter_class = ChainErrorFilter
-    serializer_class = ChainErrorSerializer
+    filter_class = ChainNodeErrorFilter
+    serializer_class = ChainNodeErrorSerializer
     pagination_class = None
 
     fields = (
-        'error_location',
-        'iati_element',
-        'message',
-        'level')
+        'chain',
+        'error_type',
+        'mentioned_activity_or_org',
+        'related_id',
+        'warning_level'
+    )
 
     def get_queryset(self):
         pk = self.kwargs.get('pk')

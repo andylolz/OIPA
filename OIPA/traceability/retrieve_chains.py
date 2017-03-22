@@ -1,6 +1,7 @@
 from iati.models import Activity
-from traceability.models import Chain, ChainLink, ChainError
+from traceability.models import Chain, ChainNode, ChainNodeError, ChainLink, 
 from django.core.exceptions import ObjectDoesNotExist
+from datetime import datetime
 
 
 def contains(list, filter):
@@ -10,14 +11,26 @@ def contains(list, filter):
     return False
 
 
+def find(list, filter):
+    for x in list:
+        if filter(x):
+            return x
+    return False
+
+
 class ChainRetriever():
     """
     Wrapper class for all chain building functionality
 
     """
     def __init__(self):
+        self.nodes = []
+
         self.links = []
+        self.link_relations = []
+
         self.errors = []
+        self.started_at 
         self.chain = None
 
     def retrieve_chains_by_publisher(self, publisher_iati_id):
@@ -29,19 +42,31 @@ class ChainRetriever():
         activity = Activity.objects.get(iati_identifier=activity_id)
         self.retrieve_chain(activity)
 
-    def retrieve_chain(self, root_activity):
+    def retrieve_chain_for_all_activities(self):
+        for activity in Activity.objects.iterator():
+
+            chain = Chain.objects.filter(chainlink__activity=activity)
+            if len(chain) > 0 and chain.last_updated < self.started_at:
+                self.retrieve_chain(activity)
+
+            if not ChainLink.objects.filter(activity=activity).exists():
+                # not in a chain yet, create the chain
+                retrieve_chain(activity)
+
+
+    def retrieve_chain(self, activity):
 
         # delete old chain
-        if Chain.objects.filter(root_activity=root_activity).count() > 0:
-            Chain.objects.filter(root_activity=root_activity).delete()
+        if Chain.objects.filter(chainlink__activity=activity).count() > 0:
+            Chain.objects.filter(chainlink__activity=activity).delete()
 
         # create, is saved as self.chain
-        self.create_chain(root_activity)
+        self.create_chain(activity)
         
-        # add root activity to the links
-        self.add_link(root_activity, None, 'up', False)
+        # add all links based upon the current activity
+        self.get_activity_links(activity)
 
-        # walk the tree
+        # add all links based upon the links within our current activity and do that recursively
         self.walk_the_tree(0)
 
         # save links
@@ -50,14 +75,28 @@ class ChainRetriever():
             link.pop('checked', None)
 
         ChainLink.objects.bulk_create([ChainLink(**link) for link in self.links])
+        ChainLinkRelation.objects.bulk_create(ChainLinkRelation(**link_relation) for link_relation in self.link_relations[])
 
         # save errors
-        ChainError.objects.bulk_create([ChainError(**error) for error in self.errors])
+        ChainErrorError.objects.bulk_create([ChainNodeError(**error) for error in self.errors])
+
+
+        # TODO set eol, bol, level of nodes.
+        # idea:
+        # to find bols, get all activities that are in the chain and are not mentioned as end_node.
+        # to find eols, get all activities that are in the chain and are not mentioned as start_node.
+        # to calculate levels, start with bols.
 
         # reinit
         self.links = []
         self.errors = []
         self.chain = None
+
+    def create_chain(self, root_activity):
+        # create chain
+        chain = Chain(name="Unnamed chain", last_updated=datetime.now())
+        chain.save()
+        self.chain = chain
 
     def walk_the_tree(self, loops):
 
@@ -69,43 +108,6 @@ class ChainRetriever():
         if contains(self.links, lambda x: x['checked'] == False):
             loops += 1
             self.walk_the_tree(loops)
-
-    def add_link(self, activity, parent, direction, checked):
-        
-        if not contains(self.links, lambda x: x['iati_identifier'] == activity.iati_identifier):
-
-            self.links.append({
-                'chain': self.chain,
-                'activity': activity,
-                'iati_identifier': activity.iati_identifier,
-                'parent_activity': parent,
-                'direction' : direction,
-                'checked': checked
-            })
-        else:
-            link = None
-            for l in self.links:
-                if l['iati_identifier'] == activity.iati_identifier:
-                    link = l
-            if (direction == 'up' and link['direction'] == 'down') or (direction == 'down' and link['direction'] == 'up'):
-                link['direction'] = 'both'
-
-    def add_error(self, iati_identifier_or_link_id, iati_element, message, level):
-
-        self.errors.append({
-            'chain': self.chain,
-            'error_location': iati_identifier_or_link_id,
-            'iati_element': iati_element,
-            # 'iati_element_id': ,
-            'message': message,
-            'level': level
-        })
-
-    def create_chain(self, root_activity):
-        # create chain
-        chain = Chain(name=root_activity.title.narratives.all()[0].content, root_activity=root_activity)
-        chain.save()
-        self.chain = chain
 
     def get_activity_links(self, activity):
         """
@@ -158,11 +160,70 @@ class ChainRetriever():
         If it has receiver-orgs with incorrect/missing receiver-activity-id.
         Then add as broken link
 
+        
+        # link relation types:
+        ('incoming_fund', u"Incoming Fund"),
+        ('disbursement', u"Disbursement"),
+        ('expenditure', u"Expenditure"),
+        ('incoming_commitment', u"Incoming commitment"),
+        ('outgoing_commitment', u"Outgoing commitment"),
+        ('expenditure', u"Expenditure"),
+        ('parent', u"Parent"),
+        ('child', u"Child")
+
+        
+        # node error types:
+        ('1', u"provider-org not set on incoming fund"),
+        ('2', u"provider-activity-id not set on incoming fund"),
+        ('3', u"given provider-activity-id set on incoming fund does not exist"),
+
+        ('4', u"receiver-org not set on disbursement"),
+        ('5', u"receiver-activity-id not set on disbursement"),
+        ('6', u"given receiver-activity-id set on disbursement does not exist"),
+
+        ('7', u"given related-activity with type parent does not exist"),  
+        ('8', u"given related-activity with type child does not exist"),
+
+        ('9', u"participating-org is given as funder but there are no incoming funds from this organisation ref"),
+        ('10', u"participating-org is given as implementer but there are no disbursements nor expenditures to this organisation ref"),
+
+
+        # error warning level choices
+            ('info', u"Info"),
+            ('warning', u"Warning"),
+            ('error', u"Error")
+        
+        # error type choices
+            ('1', u"provider-org not set on incoming fund"),
+            ('2', u"provider-activity-id not set on incoming fund"),
+            ('3', u"given provider-activity-id set on incoming fund does not exist"),
+
+            ('4', u"receiver-org not set on disbursement"),
+            ('5', u"receiver-activity-id not set on disbursement"),
+            ('6', u"given receiver-activity-id set on disbursement does not exist"),
+
+            ('7', u"given related-activity with type parent does not exist"),
+            ('8', u"given related-activity with type child does not exist"),
+
+            ('9', u"participating-org is given as funder but there are no incoming funds from this organisation ref"),
+            ('10', u"participating-org is given as implementer but there are no disbursements nor expenditures to this organisation ref")
+
         """
 
         # init 
         provider_org_refs = []
         receiver_org_refs = []
+
+        activity_node = ChainNode.objects.get_or_create(
+            activity=activity,
+            defaults={
+                'activity_oipa_id': activity.id,
+                'activity_iati_id': activity.iati_identifier,
+                'level': None,
+                'bol': False,
+                'eol': False
+            },
+        )
 
         # 1.
         for t in activity.transaction_set.filter(transaction_type='1'):
@@ -170,15 +231,15 @@ class ChainRetriever():
                 provider_org = t.provider_organisation
                 provider_org_refs.append(provider_org.ref)
             except ObjectDoesNotExist:
-                self.add_error(activity.iati_identifier, 'transaction/provider-org', 'provider-org not set on incoming funds', 'error')
+                self.add_error(activity_node, '1', '', 'error', t.id)
                 continue
-
             if not provider_org.provider_activity_ref or provider_org.provider_activity_ref == '':
-                self.add_error(activity.iati_identifier, 'transaction/provider-org/provider-activity-id', 'no provider activity given on incoming fund', 'error')
+                self.add_error(activity_node, '2', '', 'error', t.id)
             elif not provider_org.provider_activity:
-                self.add_error(activity.iati_identifier, 'transaction/provider-org', 'given provider activity does not exist on incoming fund', 'error')
+                self.add_error(activity_node, '3', provider_org.provider_activity_ref, 'error', t.id)
             else:
-                self.add_link(t.activity, provider_org.provider_activity, 'up', False)
+                self.add_link(provider_org.provider_activity, t.activity, 'incoming_fund', 'end_node', t.id)
+
 
         # 2.
         for t in activity.transaction_set.filter(transaction_type='3'):
@@ -186,14 +247,15 @@ class ChainRetriever():
                 receiver_org = t.receiver_organisation
                 receiver_org_refs.append(receiver_org.ref)
             except ObjectDoesNotExist:
-                self.add_error(activity.iati_identifier, 'transaction/receiver-org', 'receiver-org not set on disbursement', 'error')
+                self.add_error(activity_node, '4', '', 'warning', t.id)
                 continue
             if not receiver_org.receiver_activity_ref or receiver_org.receiver_activity_ref == '':
-                self.add_error(activity.iati_identifier, 'transaction/receiver-org/receiver-activity-id', 'no receiver activity given on disbursement', 'error')
+                self.add_error(activity_node, '5', '', 'info', t.id)
             elif not receiver_org.receiver_activity:
-                self.add_error(activity.iati_identifier, 'transaction/receiver-org', 'receiver activity of disbursement wih identifier "{}" does not exist'.format(receiver_org.receiver_activity_ref), 'warning')
+                self.add_error(activity_node, '6', receiver_org.receiver_activity_ref, 'error', t.id)
             else:
-                self.add_link(t.activity, receiver_org.receiver_activity, 'up', False)
+
+                self.add_link(t.activity, receiver_org.receiver_activity, 'disbursement', 'start_node', t.id)
 
 
         # 3 and 4.
@@ -202,19 +264,18 @@ class ChainRetriever():
             # parent
             if ra.type.code == '1':
                 if not ra.ref_activity:
-                    self.add_error(activity.iati_identifier, 'related-activity/ref', 'given parent related activity {} does not exist'.format(ra.ref), 'error')
+                    self.add_error(activity_node, '7', ra.ref, 'error', ra.id)
                 else:
-                    self.add_link(activity, ra.ref_activity, 'up', False)
+                    self.add_link(ra.ref_activity, activity, 'parent', 'end_node', ra.id)
             # child
             elif ra.type.code == '2':
                 if not ra.ref_activity:
-                    self.add_error(activity.iati_identifier, 'related-activity/ref', 'given child related activity {} does not exist'.format(ra.ref), 'error')
+                    self.add_error(activity_node, '8', ra.ref, 'error', ra.id)
                 else:
-                    self.add_link(ra.ref_activity, activity, 'down', False)
+                    self.add_link(activity, ra.ref_activity, 'child', 'start_node', ra.id)
 
         # 4.
         # DONE IN #3.
-
 
         # cache for #5
         for t in activity.transaction_set.filter(transaction_type='4'):
@@ -228,24 +289,89 @@ class ChainRetriever():
         for ra in activity.participating_organisations.all():
             # for role funding, check if in incoming funds
             if ra.role.code == '1' and not ra.ref in provider_org_refs:
-                self.add_error(activity.iati_identifier, 'participating-org', '{} is given as funder but there are no incoming funds from this organisation ref'.format(ra.ref), 'warning')
-
+                self.add_error(activity_node, '9', ra.ref, 'info', ra.id)
             # for role implementing, check if in disbursements or expenditures
             elif ra.role.code == '4' and not ra.ref in receiver_org_refs:
-                self.add_error(activity.iati_identifier, 'participating-org', '{} is given as implementer but there are no disbursements nor expenditures from this organisation ref'.format(ra.ref), 'warning')
-
+                self.add_error(activity_node, '10', ra.ref, 'info', ra.id)
 
         # 6. 
         for a in Activity.objects.filter(transaction__transaction_type="1", transaction__provider_organisation__provider_activity_ref=activity.iati_identifier).distinct():
-            self.add_link(a, activity, 'up', False)
+            self.add_link(self, activity, a, 'incoming_fund', 'end_node', 'to do')
 
         # 7.
         for a in Activity.objects.filter(transaction__transaction_type="3", transaction__receiver_organisation__receiver_activity_ref=activity.iati_identifier).distinct():
-            self.add_link(a, activity, 'down', False)
+            self.add_link(self, a, activity, 'disbursement', 'start_node', 'to do')
 
         # 8.
         # DONE IN #1
 
         # 9.
         # DONE IN #2
+
+    def add_link(self, start_activity, end_activity, relation, from_node, related_id):
+        """
+        start_activity
+        end_activity
+        relation: ChainLinkRelation.relation
+        from: ChainLinkRelation.from : is this link made based upon data from the start_node or end_node
+        related_id: ChainLinkRelation.related_id : 
+        """
+
+        # add start activity
+        start_node = ChainNode.objects.get_or_create(
+            activity=start_activity,
+            defaults={
+                'activity_oipa_id': start_activity.id,
+                'activity_iati_id': start_activity.iati_identifier,
+                'level': None,
+                'bol': False,
+                'eol': False
+            },
+        )
+
+        # add end activity
+        end_node = ChainNode.objects.get_or_create(
+            activity=end_activity,
+            defaults={
+                'activity_oipa_id': end_activity.id,
+                'activity_iati_id': end_activity.iati_identifier,
+                'level': None,
+                'bol': False,
+                'eol': False
+            },
+        )
+
+        # add link + relation info
+        link = find(self.links, lambda x: (x['start_node'].activity == activity and x['end_node'].activity == activity)):
+
+        if not link:
+            self.links.append({
+                'chain': self.chain,
+                'start_node': start_node,
+                'end_node': end_node,
+                'relations': [
+                    {
+                        'relation': relation,
+                        'from': from_node,
+                        'related_id': related_id,
+                    }
+                ]
+            })
+        else:
+            link.relations.append(
+                {
+                'relation': relation,
+                'from': from_node,
+                'related_id': related_id,
+            })
+
+    def add_error(self, chain_node, error_code, mentioned_activity_or_org, warning_level, related_id):
+        self.errors.append({
+            'chain_node': chain_node,
+            'error_type': error_code,
+            'mentioned_activity_or_org': mentioned_activity_or_org,
+            'warning_level': warning_level,
+            'related_id': related_id
+        })
+
 

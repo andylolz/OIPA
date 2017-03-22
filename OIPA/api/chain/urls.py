@@ -10,7 +10,7 @@ urlpatterns = [
         api.chain.views.ChainLinkList.as_view(),
         name='chain-link-list'),
     url(r'^(?P<pk>[^@$&+,/:;=?]+)/errors/',
-        api.chain.views.ChainErrorList.as_view(),
+        api.chain.views.ChainNodeErrorList.as_view(),
         name='chain-error-list'),
     url(r'^(?P<pk>[^@$&+,/:;=?]+)/activities/',
         api.chain.views.ChainActivities.as_view(),
